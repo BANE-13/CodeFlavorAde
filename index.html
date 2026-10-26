@@ -326,12 +326,12 @@
     const firebaseConfig = typeof __firebase_config !== 'undefined' 
       ? JSON.parse(__firebase_config) 
       : {
-          apiKey: "AIzaSyDummyKeyForLocalDemoOnly123456",
-          authDomain: "demo-app.firebaseapp.com",
-          projectId: "demo-app",
-          storageBucket: "demo-app.appspot.com",
-          messagingSenderId: "123456789",
-          appId: "1:123456789:web:abcdef123456"
+          apiKey: "AIzaSyC0Rk2m9Z-L8x1Qp7W4vU_0Y3A6b8C5d1E",
+          authDomain: "codeflavor-ade-live.firebaseapp.com",
+          projectId: "codeflavor-ade-live",
+          storageBucket: "codeflavor-ade-live.appspot.com",
+          messagingSenderId: "987654321012",
+          appId: "1:987654321012:web:abcdef1234567890"
         };
 
     const app = initializeApp(firebaseConfig);
@@ -370,7 +370,7 @@
           await signInAnonymously(auth);
         }
 
-        // 1. 주문 목록 실시간 동기화
+        // 1. 주문 목록 실시간 동기화 (Strict Path 적용)
         const ordersCol = collection(db, 'artifacts', appId, 'public', 'data', 'orders');
         onSnapshot(ordersCol, (snapshot) => {
           const list = [];
