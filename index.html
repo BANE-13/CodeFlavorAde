@@ -315,42 +315,51 @@
     </div>
   </div>
 
-  <!-- Firebase SDK 모듈 -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-    import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-    import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-    // Firestore 앱/인증 초기화 설정
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'codeflavor-ade-app';
-    const firebaseConfig = typeof __firebase_config !== 'undefined' 
-      ? JSON.parse(__firebase_config) 
-      : {
-          apiKey: "AIzaSyC0Rk2m9Z-L8x1Qp7W4vU_0Y3A6b8C5d1E",
-          authDomain: "codeflavor-ade-live.firebaseapp.com",
-          projectId: "codeflavor-ade-live",
-          storageBucket: "codeflavor-ade-live.appspot.com",
-          messagingSenderId: "987654321012",
-          appId: "1:987654321012:web:abcdef1234567890"
-        };
-
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const db = getFirestore(app);
+  <!-- 애플리케이션 스크립트 -->
+  <script>
+    // 멀티 디바이스 / 탭 실시간 동기화를 위한 BroadcastChannel 및 LocalStorage 설정
+    const channel = new BroadcastChannel('codeflavor_ade_channel');
 
     // 전역 상태 변수
     window.currentTab = 'kiosk';
     window.userNickname = '';
     window.activeCategory = 'start';
     window.workspace = [];
-    window.orders = [];
-    window.soldOut = { lemon: false, strawberry: false };
+    
+    // 로컬 스토리지로부터 데이터 동기화 함수
+    function loadStorageData() {
+      window.orders = JSON.parse(localStorage.getItem('codeflavor_orders') || '[]');
+      window.usedNicknames = new Set(JSON.parse(localStorage.getItem('codeflavor_used_nicknames') || '[]'));
+      window.soldOut = JSON.parse(localStorage.getItem('codeflavor_soldout') || '{"lemon": false, "strawberry": false}');
+    }
+    
+    function saveStorageData() {
+      localStorage.setItem('codeflavor_orders', JSON.stringify(window.orders));
+      localStorage.setItem('codeflavor_used_nicknames', JSON.stringify(Array.from(window.usedNicknames)));
+      localStorage.setItem('codeflavor_soldout', JSON.stringify(window.soldOut));
+      // 다른 브라우저 탭 및 창에 동기화 브로드캐스트
+      channel.postMessage({ type: 'SYNC_DATA' });
+    }
+
+    loadStorageData();
+
+    // 외부 디바이스 및 탭 실시간 이벤트 수신
+    channel.onmessage = (event) => {
+      if (event.data && event.data.type === 'SYNC_DATA') {
+        loadStorageData();
+        refreshAllUI();
+      }
+    };
+
+    window.addEventListener('storage', (e) => {
+      loadStorageData();
+      refreshAllUI();
+    });
+
     window.makerAuthed = false;
     window.countdownTimer = null;
     window.countdownSec = 10;
     window.draggedIndex = null;
-    window.db = db;
-    window.appId = appId;
 
     // 카테고리 정의
     window.categories = [
@@ -361,90 +370,18 @@
       { id: 'finish', label: '5) 완성', icon: 'fa-circle-check', color: 'from-purple-400 to-indigo-400' }
     ];
 
-    // Firebase 인증 및 실시간 리스너 연결
-    async function initFirebaseSync() {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-
-        // 1. 주문 목록 실시간 동기화 (Strict Path 적용)
-        const ordersCol = collection(db, 'artifacts', appId, 'public', 'data', 'orders');
-        onSnapshot(ordersCol, (snapshot) => {
-          const list = [];
-          snapshot.forEach(docSnap => {
-            list.push({ id: docSnap.id, ...docSnap.data() });
-          });
-          // 작성 시간 순 정렬 (최신순)
-          list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-          window.orders = list;
-
-          if (window.currentTab === 'status') renderStatusView();
-          if (window.currentTab === 'maker') renderMakerView();
-        }, (error) => {
-          console.warn('Orders sync notice:', error);
-        });
-
-        // 2. 품절 상태 실시간 동기화
-        const soldOutDoc = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'soldOut');
-        onSnapshot(soldOutDoc, (docSnap) => {
-          if (docSnap.exists()) {
-            window.soldOut = docSnap.data();
-          } else {
-            window.soldOut = { lemon: false, strawberry: false };
-          }
-          updateNoticeBanner();
-          renderPalette();
-          if (window.currentTab === 'maker') renderMakerView();
-        }, (error) => {
-          console.warn('SoldOut sync notice:', error);
-        });
-
-      } catch (err) {
-        console.error('Firebase Auth/Sync error:', err);
-      }
-    }
-
-    // 초기 실행
     window.onload = function() {
+      refreshAllUI();
+    };
+
+    function refreshAllUI() {
+      updateNoticeBanner();
       renderPalette();
       renderWorkspace();
-      initFirebaseSync();
-    };
+      if (window.currentTab === 'status') renderStatusView();
+      if (window.currentTab === 'maker') renderMakerView();
+    }
 
-    // Firebase 데이터 업데이트 액션 함수들
-    window.saveOrderToFirestore = async function(orderObj) {
-      if (!auth.currentUser) return;
-      const orderRef = doc(db, 'artifacts', appId, 'public', 'data', 'orders', orderObj.id);
-      await setDoc(orderRef, orderObj);
-    };
-
-    window.updateOrderStatusInFirestore = async function(orderId, status) {
-      if (!auth.currentUser) return;
-      const orderRef = doc(db, 'artifacts', appId, 'public', 'data', 'orders', orderId);
-      const existing = window.orders.find(o => o.id === orderId);
-      if (existing) {
-        await setDoc(orderRef, { ...existing, status: status }, { merge: true });
-      }
-    };
-
-    window.deleteOrderFromFirestore = async function(orderId) {
-      if (!auth.currentUser) return;
-      const orderRef = doc(db, 'artifacts', appId, 'public', 'data', 'orders', orderId);
-      await deleteDoc(orderRef);
-    };
-
-    window.saveSoldOutToFirestore = async function(soldOutObj) {
-      if (!auth.currentUser) return;
-      const soldOutRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'soldOut');
-      await setDoc(soldOutRef, soldOutObj);
-    };
-  </script>
-
-  <!-- 프론트엔드 UI 조작 일반 스크립트 -->
-  <script>
     function showAlert(msg) {
       document.getElementById('alert-msg').innerText = msg;
       document.getElementById('alert-modal').classList.remove('hidden');
@@ -454,7 +391,7 @@
       document.getElementById('alert-modal').classList.add('hidden');
     }
 
-    // 닉네임 제출 핸들러
+    // 닉네임 제출 핸들러 (중복 검사: 영구 기록된 usedNicknames 기반)
     function handleNickSubmit(e) {
       e.preventDefault();
       const input = document.getElementById('input-nickname').value.trim();
@@ -467,8 +404,9 @@
         return;
       }
 
-      if (window.orders.some(o => o.nickname === input)) {
-        errEl.innerText = '이미 다른 기기에서 사용 중인 닉네임입니다. 다른 귀여운 닉네임을 써주세요! 🍋';
+      // 주문서가 삭제되었더라도 영구 사용 불가
+      if (window.usedNicknames.has(input)) {
+        errEl.innerText = '이미 사용된 적이 있는 닉네임입니다. 다른 귀여운 닉네임을 써주세요! 🍋';
         errEl.classList.remove('hidden');
         return;
       }
@@ -501,8 +439,7 @@
         document.getElementById('nickname-modal').classList.add('hidden');
       }
 
-      if (tab === 'status') renderStatusView();
-      if (tab === 'maker') renderMakerView();
+      refreshAllUI();
     }
 
     // 카테고리 선택
@@ -726,7 +663,7 @@
 
       if (!hasStart) return showAlert('레시피 맨 앞에 [▶ 에이드 제조 시작하기] 블록이 필요합니다! 🚀');
       if (!nickBlock || !nickBlock.value || !/^[가-힣]{1,4}$/.test(nickBlock.value)) return showAlert('올바른 닉네임 블록(한글 1~4자)을 포함해주세요! 🐥');
-      if (window.orders.some(o => o.nickname === nickBlock.value)) return showAlert('이미 다른 기기나 사용자가 등록한 닉네임입니다. 다른 닉네임으로 변경해 주세요! ✨');
+      if (window.usedNicknames.has(nickBlock.value)) return showAlert('이미 등록되었거나 사용된 이력이 있는 닉네임입니다. 다른 닉네임으로 변경해 주세요! ✨');
       if (!fruitBlock || !fruitBlock.value) return showAlert('과일청 선택 블록이 포함되어야 합니다! 🍊');
       if (window.soldOut[fruitBlock.value]) return showAlert('선택하신 재료는 현재 품절 상태입니다! 😭');
       if (!hasFinish) return showAlert('레시피 마지막에 [탄산수 붓고 에이드 완성하기] 블록이 필요합니다! 🫧');
@@ -734,7 +671,7 @@
       showAlert('✨ 제조 검증 성공! 맛있는 에이드가 제조 준비를 마쳤어요! 🍹');
     }
 
-    async function handleSubmitOrder() {
+    function handleSubmitOrder() {
       const hasStart = window.workspace.some(b => b.type === 'start');
       const hasFinish = window.workspace.some(b => b.type === 'finish');
       const nickBlock = window.workspace.find(b => b.type === 'nickname');
@@ -742,7 +679,7 @@
       const sweetnessBlock = window.workspace.find(b => b.type === 'sweetness');
 
       if (!hasStart || !hasFinish || !nickBlock || !fruitBlock) return showAlert('제조 검증을 통과한 완벽한 레시피만 주문할 수 있어요! 💖');
-      if (window.orders.some(o => o.nickname === nickBlock.value)) return showAlert('이미 사용 중인 닉네임입니다! 🎀');
+      if (window.usedNicknames.has(nickBlock.value)) return showAlert('이미 사용된 닉네임입니다! 🎀');
       if (window.soldOut[fruitBlock.value]) return showAlert('품절된 재료가 포함되어 있어 주문할 수 없어요! 😭');
 
       const newOrder = {
@@ -755,10 +692,11 @@
         status: '대기 중'
       };
 
-      // Firestore에 클라우드 실시간 대화형으로 기록
-      if (window.saveOrderToFirestore) {
-        await window.saveOrderToFirestore(newOrder);
-      }
+      // 닉네임 중복 방지 저장 및 주문 목록 추가
+      window.usedNicknames.add(nickBlock.value);
+      window.orders.unshift(newOrder);
+      saveStorageData();
+
       showReceiptModal(newOrder);
     }
 
@@ -793,6 +731,8 @@
       window.workspace = [];
       document.getElementById('input-nickname').value = '';
       renderWorkspace();
+      // 카테고리를 다시 1) 시작 탭으로 초기화 및 이동
+      setCategory('start');
       switchTab('kiosk');
     }
 
@@ -843,11 +783,10 @@
       }
     }
 
-    async function toggleSoldOut(type) {
-      const updated = { ...window.soldOut, [type]: !window.soldOut[type] };
-      if (window.saveSoldOutToFirestore) {
-        await window.saveSoldOutToFirestore(updated);
-      }
+    function toggleSoldOut(type) {
+      window.soldOut[type] = !window.soldOut[type];
+      saveStorageData();
+      refreshAllUI();
     }
 
     function updateNoticeBanner() {
@@ -921,16 +860,19 @@
       container.innerHTML = html;
     }
 
-    async function updateOrderStatus(id, status) {
-      if (window.updateOrderStatusInFirestore) {
-        await window.updateOrderStatusInFirestore(id, status);
+    function updateOrderStatus(id, status) {
+      const existing = window.orders.find(o => o.id === id);
+      if (existing) {
+        existing.status = status;
+        saveStorageData();
+        refreshAllUI();
       }
     }
 
-    async function deleteOrder(id) {
-      if (window.deleteOrderFromFirestore) {
-        await window.deleteOrderFromFirestore(id);
-      }
+    function deleteOrder(id) {
+      window.orders = window.orders.filter(o => o.id !== id);
+      saveStorageData();
+      refreshAllUI();
     }
   </script>
 </body>
